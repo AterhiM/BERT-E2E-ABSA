@@ -2,7 +2,6 @@ import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "3, 1, 2"
 
-#seed_numbers = [42, 593, 1774, 65336, 189990]
 seed_numbers = [42]
 model_type = 'bert'
 absa_type = 'linear'
@@ -11,12 +10,15 @@ fix_tfm = 0
 task_name = 'laptop14'
 warmup_steps = 0
 overfit = 0
+
+## -------------------------------------- Data checking -----------------------------------------------------------------
 if task_name == 'laptop14':
     train_batch_size = 32
 elif task_name == 'rest_total' or task_name == 'rest14' or task_name == 'rest15' or task_name == 'rest16':
     train_batch_size = 16
 else:
-    raise Exception("Unsupported dataset %s!!!" % task_name)
+    raise ValueError("Unsupported dataset %s!!!" % task_name)
+##  -------------------------------------- -------------------------------------- ---------------------------------------
 
 for run_id, seed in enumerate(seed_numbers):
     command = "python main.py --model_type %s --absa_type %s --tfm_mode %s --fix_tfm %s " \

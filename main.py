@@ -17,13 +17,11 @@ import torch.distributed as dist
 from tensorboardX import SummaryWriter
 
 import glob
-import json
 
 logger = logging.getLogger(__name__)
 
-#ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, XLNetConfig)), ())
 ALL_MODELS = (
-     'bert-base-uncased',
+ 'bert-base-uncased',
  'bert-large-uncased',
  'bert-base-cased',
  'bert-large-cased',
@@ -42,12 +40,9 @@ ALL_MODELS = (
  'xlnet-large-cased'
 )
 
-
 MODEL_CLASSES = {
     'bert': (BertConfig, BertABSATagger, BertTokenizer),
-    'xlnet': (XLNetConfig, XLNetABSATagger, XLNetTokenizer)
 }
-
 
 def set_seed(args):
     random.seed(args.seed)
@@ -146,10 +141,9 @@ def init_args():
         output_dir = '%s-fix' % output_dir
     if args.overfit:
         output_dir = '%s-overfit' % output_dir
-        args.max_steps = 3000
+        args.max_steps = 1 # 3000
     args.output_dir = output_dir
     return args
-
 
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
@@ -163,7 +157,7 @@ def train(args, train_dataset, model, tokenizer):
 
     if args.max_steps > 0:
         t_total = args.max_steps
-        args.num_train_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
+        args.num_train_epochs = 1 # args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
     else:
         t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
@@ -173,11 +167,11 @@ def train(args, train_dataset, model, tokenizer):
         {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
         {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
+    
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total)
 
     # Train!
-
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", args.num_train_epochs)
@@ -190,9 +184,12 @@ def train(args, train_dataset, model, tokenizer):
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
     model.zero_grad()
+
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
+    
     # set the seed number
-    set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
+    set_seed(args)
+    
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
@@ -203,6 +200,7 @@ def train(args, train_dataset, model, tokenizer):
                       'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
                       'labels':         batch[3]}
             ouputs = model(**inputs)
+
             # loss with attention mask
             loss = ouputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
@@ -210,7 +208,6 @@ def train(args, train_dataset, model, tokenizer):
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
-
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -254,7 +251,6 @@ def train(args, train_dataset, model, tokenizer):
 
     return global_step, tr_loss / global_step
 
-
 def evaluate(args, model, tokenizer, mode, prefix=""):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_task_names = (args.task_name,)
@@ -273,12 +269,13 @@ def evaluate(args, model, tokenizer, mode, prefix=""):
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
         # Eval!
-        #logger.info("***** Running evaluation on %s.txt *****" % mode)
+        logger.info("***** Running evaluation on %s.txt *****" % mode)
         eval_loss = 0.0
         nb_eval_steps = 0
         preds = None
         out_label_ids = None
         crf_logits, crf_mask = [], []
+
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             model.eval()
             batch = tuple(t.to(args.device) for t in batch)
@@ -303,7 +300,9 @@ def evaluate(args, model, tokenizer, mode, prefix=""):
             else:
                 preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
                 out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
+        
         eval_loss = eval_loss / nb_eval_steps
+        
         # argmax operation over the last dimension
         if model.tagger_config.absa_type != 'crf':
             # greedy decoding
@@ -319,12 +318,12 @@ def evaluate(args, model, tokenizer, mode, prefix=""):
 
         output_eval_file = os.path.join(eval_output_dir, "%s_results.txt" % mode)
         with open(output_eval_file, "w") as writer:
-            #logger.info("***** %s results *****" % mode)
+            logger.info("***** %s results *****" % mode)
             for key in sorted(result.keys()):
                 if 'eval_loss' in key:
                     logger.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
-            #logger.info("***** %s results *****" % mode)
+            logger.info("***** %s results *****" % mode)
 
     return results
 
@@ -341,7 +340,7 @@ def load_and_cache_examples(args, task, tokenizer, mode='train'):
         print("cached_features_file:", cached_features_file)
         features = torch.load(cached_features_file)
     else:
-        #logger.info("Creating features from dataset file at %s", args.data_dir)
+        logger.info("Creating features from dataset file at %s", args.data_dir)
         label_list = processor.get_labels(args.tagging_schema)
         if mode == 'train':
             examples = processor.get_train_examples(args.data_dir, args.tagging_schema)
@@ -350,7 +349,7 @@ def load_and_cache_examples(args, task, tokenizer, mode='train'):
         elif mode == 'test':
             examples = processor.get_test_examples(args.data_dir, args.tagging_schema)
         else:
-            raise Exception("Invalid data mode %s..." % mode)
+            raise ValueError("Invalid data mode %s..." % mode)
         features = convert_examples_to_seq_features(examples=examples, label_list=label_list, tokenizer=tokenizer,
                                                     cls_token_at_end=bool(args.model_type in ['xlnet']),
                                                     cls_token=tokenizer.cls_token,
@@ -359,7 +358,7 @@ def load_and_cache_examples(args, task, tokenizer, mode='train'):
                                                     pad_on_left=bool(args.model_type in ['xlnet']),
                                                     pad_token_segment_id=4 if args.model_type in ['xlnet'] else 0)
         if args.local_rank in [-1, 0]:
-            #logger.info("Saving features into cached file %s", cached_features_file)
+            logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
 
     # Convert to Tensors and build dataset
@@ -409,6 +408,7 @@ def main():
     args.task_name = args.task_name.lower()
     if args.task_name not in processors:
         raise ValueError("Task not found: %s" % args.task_name)
+    
     processor = processors[args.task_name]()
     args.output_mode = output_modes[args.task_name]
     label_list = processor.get_labels(args.tagging_schema)
@@ -523,7 +523,7 @@ def main():
         validation_string = '\t\tdev-%s: %.5lf, dev-%s: %.5lf' % (dev_f1_k, dev_f1_v, dev_loss_k, dev_loss_v)
         log_file.write(validation_string+'\n')
 
-    n_times = args.max_steps // args.save_steps + 1
+    n_times = 2 # args.max_steps // args.save_steps + 1
     for i in range(1, n_times):
         step = i * 100
         log_file.write('\tStep %s:\n' % step)
@@ -537,10 +537,5 @@ def main():
     log_file.write('******************************************\n')
     log_file.close()
 
-
 if __name__ == '__main__':
     main()
-
-
-
-

@@ -23,7 +23,6 @@ from transformers.models.bert.modeling_bert import BertEncoder, BertEmbeddings, 
 import torch.nn as nn
 from bert_utils import *
 
-
 BERT_PRETRAINED_MODEL_ARCHIVE_MAP = {
  'bert-base-uncased': 'https://s3.amazonaws.com/models.huggingface.co/bert/bert-base-uncased-pytorch_model.bin',
  'bert-large-uncased': 'https://s3.amazonaws.com/models.huggingface.co/bert/bert-large-uncased-pytorch_model.bin',
