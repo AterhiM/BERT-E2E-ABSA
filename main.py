@@ -7,9 +7,9 @@ import numpy as np
 
 from glue_utils import convert_examples_to_seq_features, output_modes, processors, compute_metrics_absa
 from tqdm import tqdm, trange
-from transformers import BertConfig, BertTokenizer, XLNetConfig, XLNetTokenizer, WEIGHTS_NAME
+from transformers import BertConfig, BertTokenizer, WEIGHTS_NAME
 from transformers import AdamW, get_linear_schedule_with_warmup
-from absa_layer import BertABSATagger, XLNetABSATagger
+from absa_layer import BertABSATagger
 
 from torch.utils.data import DataLoader, TensorDataset, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -50,7 +50,6 @@ def set_seed(args):
     torch.manual_seed(args.seed)
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
-
 
 def init_args():
     parser = argparse.ArgumentParser()
@@ -105,7 +104,7 @@ def init_args():
                         help="Max gradient norm.")
     parser.add_argument("--num_train_epochs", default=3.0, type=float,
                         help="Total number of training epochs to perform.")
-    parser.add_argument("--max_steps", default=-1, type=int,
+    parser.add_argument("--max_steps", default=2, type=int, # default=-1
                         help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_steps", default=0, type=int,
                         help="Linear warmup over warmup_steps.")
@@ -197,7 +196,7 @@ def train(args, train_dataset, model, tokenizer):
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
                       'attention_mask': batch[1],
-                      'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
+                      'token_type_ids': batch[2] if args.model_type == 'bert' else None,
                       'labels':         batch[3]}
             ouputs = model(**inputs)
 
@@ -241,6 +240,8 @@ def train(args, train_dataset, model, tokenizer):
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
+                break
+            if step == 3:
                 break
         if args.max_steps > 0 and global_step > args.max_steps:
             train_iterator.close()
@@ -476,13 +477,15 @@ def main():
         global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
         if global_step == 'finetune' or global_step == 'train' or global_step == 'fix' or global_step == 'overfit':
             continue
+
         # validation set
         model = model_class.from_pretrained(checkpoint)
         model.to(args.device)
         dev_result = evaluate(args, model, tokenizer, mode='dev', prefix=global_step)
 
         # regard the micro-f1 as the criteria of model selection
-        if int(global_step) > 1000 and dev_result['micro-f1'] > best_f1:
+        # int(global_step) > 1000 and dev_result['micro-f1'] > best_f1
+        if dev_result['micro-f1'] > best_f1:
             best_f1 = dev_result['micro-f1']
             best_checkpoint = checkpoint
         dev_result = dict((k + '_{}'.format(global_step), v) for k, v in dev_result.items())
@@ -494,6 +497,7 @@ def main():
 
     best_ckpt_string = "\nThe best checkpoint is %s" % best_checkpoint
     logger.info(best_ckpt_string)
+
     dev_f1_values, dev_loss_values = [], []
     for k in results:
         v = results[k]
@@ -508,14 +512,26 @@ def main():
             test_f1_values.append((k, v))
         if 'eval_loss' in k:
             test_loss_values.append((k, v))
+
+    print("test_results: \n", test_results)
+
+
     log_file_path = '%s/log.txt' % args.output_dir
     log_file = open(log_file_path, 'a')
     log_file.write("\tValidation:\n")
+
     for (test_f1_k, test_f1_v), (test_loss_k, test_loss_v), (dev_f1_k, dev_f1_v), (dev_loss_k, dev_loss_v) in zip(
             test_f1_values, test_loss_values, dev_f1_values, dev_loss_values):
-        global_step = int(test_f1_k.split('_')[-1])
+
+        print("\n\n\n")
+        print("test_f1_k, test_f1_values, test_f1_values[-1], test_f1_values[0][-1], test_f1_k.split('_'): \n")
+        print(test_f1_k, test_f1_values, test_f1_values[-1], test_f1_values[0][-1], test_f1_k.split('_'))
+
+        global_step = int(test_f1_values[0][-1])
+
         if not args.overfit and global_step <= 1000:
             continue
+
         print('test-%s: %.5lf, test-%s: %.5lf, dev-%s: %.5lf, dev-%s: %.5lf' % (test_f1_k,
                                                                                 test_f1_v, test_loss_k, test_loss_v,
                                                                                 dev_f1_k, dev_f1_v, dev_loss_k,
@@ -524,16 +540,17 @@ def main():
         log_file.write(validation_string+'\n')
 
     n_times = 2 # args.max_steps // args.save_steps + 1
-    for i in range(1, n_times):
-        step = i * 100
-        log_file.write('\tStep %s:\n' % step)
-        precision = test_results['precision_%s' % step]
-        recall = test_results['recall_%s' % step]
-        micro_f1 = test_results['micro-f1_%s' % step]
-        macro_f1 = test_results['macro-f1_%s' % step]
-        log_file.write('\t\tprecision: %.4lf, recall: %.4lf, micro-f1: %.4lf, macro-f1: %.4lf\n'
-                       % (precision, recall, micro_f1, macro_f1))
-    log_file.write("\tBest checkpoint: %s\n" % best_checkpoint)
+    # for i in range(1, n_times):
+    #     step = i * 100
+    #     log_file.write('\tStep %s:\n' % step)
+    #     precision = test_results['precision_%s' % step]
+    #     recall = test_results['recall_%s' % step]
+    #     micro_f1 = test_results['micro-f1_%s' % step]
+    #     macro_f1 = test_results['macro-f1_%s' % step]
+    #     log_file.write('\t\tprecision: %.4lf, recall: %.4lf, micro-f1: %.4lf, macro-f1: %.4lf\n'
+    #                    % (precision, recall, micro_f1, macro_f1))
+
+    log_file.write("\t" + best_ckpt_string + "\n")
     log_file.write('******************************************\n')
     log_file.close()
 

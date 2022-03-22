@@ -14,14 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from transformers import PreTrainedModel, BertModel, BertConfig, XLNetModel, XLNetConfig
-# model map for BERT
-from transformers import BERT_PRETRAINED_CONFIG_ARCHIVE_MAP
-# model map for XLNet
-from transformers import XLNET_PRETRAINED_CONFIG_ARCHIVE_MAP
-from transformers.models.bert.modeling_bert import BertEncoder, BertEmbeddings, BertPooler
+from transformers import PreTrainedModel, BertConfig
 import torch.nn as nn
-from bert_utils import *
+from bert_utils import load_tf_weights_in_bert
+import torch
 
 BERT_PRETRAINED_MODEL_ARCHIVE_MAP = {
  'bert-base-uncased': 'https://s3.amazonaws.com/models.huggingface.co/bert/bert-base-uncased-pytorch_model.bin',
@@ -41,12 +37,6 @@ BERT_PRETRAINED_MODEL_ARCHIVE_MAP = {
  'bert-base-german-dbmdz-uncased': 'https://s3.amazonaws.com/models.huggingface.co/bert/bert-base-german-dbmdz-uncased-pytorch_model.bin'
 }
 
-XLNET_PRETRAINED_MODEL_ARCHIVE_MAP = {
- 'xlnet-base-cased': 'https://s3.amazonaws.com/models.huggingface.co/bert/xlnet-base-cased-pytorch_model.bin',
- 'xlnet-large-cased': 'https://s3.amazonaws.com/models.huggingface.co/bert/xlnet-large-cased-pytorch_model.bin'
-}
-
-
 class BertLayerNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-12):
         """Construct a layernorm module in the TF style (epsilon inside the square root).
@@ -61,23 +51,6 @@ class BertLayerNorm(nn.Module):
         s = (x - u).pow(2).mean(-1, keepdim=True)
         x = (x - u) / torch.sqrt(s + self.variance_epsilon)
         return self.weight * x + self.bias
-
-
-class XLNetLayerNorm(nn.Module):
-    def __init__(self, d_model, eps=1e-12):
-        """Construct a layernorm module in the TF style (epsilon inside the square root).
-        """
-        super(XLNetLayerNorm, self).__init__()
-        self.weight = nn.Parameter(torch.ones(d_model))
-        self.bias = nn.Parameter(torch.zeros(d_model))
-        self.variance_epsilon = eps
-
-    def forward(self, x):
-        u = x.mean(-1, keepdim=True)
-        s = (x - u).pow(2).mean(-1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.variance_epsilon)
-        return self.weight * x + self.bias
-
 
 class BertPreTrainedModel(PreTrainedModel):
     """ An abstract class to handle weights initialization and
@@ -103,31 +76,3 @@ class BertPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
-
-
-class XLNetPreTrainedModel(PreTrainedModel):
-    config_class = XLNetConfig
-    pretrained_model_archive_map = XLNET_PRETRAINED_MODEL_ARCHIVE_MAP
-    load_tf_weights = load_tf_weights_in_xlnet
-    base_model_prefix = 'transformer'
-
-    def __init__(self, *inputs, **kwargs):
-        super(XLNetPreTrainedModel, self).__init__(*inputs, **kwargs)
-
-    def init_weights(self, module):
-        """
-        Initialize the weights.
-        :param module:
-        :return:
-        """
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            # Slightly different from the TF version which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, XLNetLayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-        elif isinstance(module, XLNetModel):
-            module.mask_emb.data.normal_(mean=0.0, std=self.config.initializer_range)
